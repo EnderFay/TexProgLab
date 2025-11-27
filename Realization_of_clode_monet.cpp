@@ -1,7 +1,9 @@
+#define NOMINMAX
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <limits>
 #include "clode_monet.h"
 
 // Helper function to join vector elements with separator.
@@ -446,4 +448,5 @@ void RestaurantApp::ShowUserList() {
             << ", Balance: " << pair.second << " rub.\n";
     }
 }
+
 
