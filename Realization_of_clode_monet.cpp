@@ -277,7 +277,7 @@ void RestaurantApp::CheckOrderStatus(int user_id) const {
         if (order.user_id == user_id) {
             std::cout << "ID " << order.id
                 << " | Status: " << order.status
-                << " | Total: " << order.total << " ğóá.\n";
+                << " | Total: " << order.total << " Ã°Ã³Ã¡.\n";
             found = true;
         }
     }
@@ -328,8 +328,8 @@ void RestaurantApp::UpdateOrderStatus() {
 
     std::cin.clear();
 
-    std::cout << "Enter new status ('is waiting', 'in progress', 'completed'): ";
-    std::getline(std::cin, new_status);
+    std::cout << "Enter new status ('is_waiting', 'in_progress', 'completed'): ";
+    std::cin >> new_status;
 
     orders_db::UpdateStatus(&orders_, order_id, new_status);
     orders_db::Save(orders_, orders_file_);
@@ -446,3 +446,4 @@ void RestaurantApp::ShowUserList() {
             << ", Balance: " << pair.second << " rub.\n";
     }
 }
+
