@@ -18,7 +18,7 @@ struct Order {
     double total;
 };
 
-// ¹1 with 4 functions(parsing in "menu.txt")
+// ï¿½1 with 4 functions(parsing in "menu.txt")
 namespace menu_db {
     bool Load(std::vector<Dish>* menu, const std::string& filename); // 1.1
     void Save(const std::vector<Dish>& menu, const std::string& filename); // 1.2
@@ -26,7 +26,7 @@ namespace menu_db {
     void RemoveDish(std::vector<Dish>* menu, size_t index); // 1.4
 }
 
-// ¹2 with 5 functions(parsing in "orders.txt")
+// ï¿½2 with 5 functions(parsing in "orders.txt")
 namespace orders_db {
     bool Load(std::vector<Order>* orders, const std::string& filename); // 2.1
     void Save(const std::vector<Order>& orders, const std::string& filename); // 2.2
@@ -35,7 +35,7 @@ namespace orders_db {
     void RemoveUserOrders(std::vector<Order>* orders, int user_id); // 2.5
 }
 
-// ¹3 with 5 functions(parsing in "users.txt")
+// ï¿½3 with 5 functions(parsing in "users.txt")
 namespace users_db {
     bool Load(std::map<int, double>* users, const std::string& filename); // 3.1
     void Save(const std::map<int, double>& users, const std::string& filename); // 3.2
@@ -66,6 +66,19 @@ public:
     void ShowOrdersList(); // A.6
     void ShowUserList(); // A.7
     void ShowMenu1(); // A.8
+
+
+    const std::vector<Dish>& GetMenu() const { return menu_; }
+    const std::vector<Order>& GetOrders() const { return orders_; }
+    const std::map<int, double>& GetUserAccounts() const { return user_accounts_; }
+
+    std::vector<Dish>& GetMenuMutable() { return menu_; }
+    std::vector<Order>& GetOrdersMutable() { return orders_; }
+    std::map<int, double>& GetUserAccountsMutable() { return user_accounts_; }
+
+    const std::string& GetMenuFile() const { return menu_file_; }
+    const std::string& GetUsersFile() const { return users_file_; }
+    const std::string& GetOrdersFile() const { return orders_file_; }
 
 private:
     std::vector<Dish> menu_;
