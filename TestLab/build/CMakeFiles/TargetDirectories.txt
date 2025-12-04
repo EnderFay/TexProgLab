@@ -1,0 +1,4 @@
+D:/vscode_projects/cpp/.vscode/TestLab/build/CMakeFiles/server.dir
+D:/vscode_projects/cpp/.vscode/TestLab/build/CMakeFiles/clode_monet.dir
+D:/vscode_projects/cpp/.vscode/TestLab/build/CMakeFiles/edit_cache.dir
+D:/vscode_projects/cpp/.vscode/TestLab/build/CMakeFiles/rebuild_cache.dir
