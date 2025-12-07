@@ -239,6 +239,9 @@ void RestaurantApp::CreateOrder(int user_id) {
             total += menu_[choice - 1].price;
             std::cout << std::endl << "Total: " << total << " rub." << std::endl;
             std::cout << "Added: " << menu_[choice - 1].name << "\n";
+            if (!selected_dishes.empty()) {
+                std::cout << "Current order: " << Join(selected_dishes, ", ") << "\n";
+            }
         }
         else if (choice != 0) {
             std::cout << "Invalid dish number!\n";
@@ -441,3 +444,4 @@ void RestaurantApp::ShowUserList() {
     }
 
 }
+
