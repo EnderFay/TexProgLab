@@ -224,10 +224,10 @@ void RestaurantApp::ShowMenu() const {
 void RestaurantApp::CreateOrder(int user_id) {
     std::vector<std::string> selected_dishes;
     double total = 0.0;
-
-    std::cout << "\nCreating order for user ID " << user_id << ":\n";
+    double balance = GetAccountBalance(user_id);
+    std::cout << "\nCreating order for user ID " << user_id << ":" << std::endl;
+    std::cout << "\nBalance: " << GetAccountBalance(user_id) << " rub.\n";
     ShowMenu();
-
     int choice;
     do {
         std::cout << "\nEnter dish number (0 to finish): ";
@@ -237,20 +237,26 @@ void RestaurantApp::CreateOrder(int user_id) {
         if (choice > 0 && choice <= static_cast<int>(menu_.size())) {
             selected_dishes.push_back(menu_[choice - 1].name);
             total += menu_[choice - 1].price;
+            std::cout << std::endl << "Total: " << total << " rub." << std::endl;
             std::cout << "Added: " << menu_[choice - 1].name << "\n";
         }
         else if (choice != 0) {
             std::cout << "Invalid dish number!\n";
         }
-        else {
-            std::cout << "Invalid dish number!\n";
-        }
     } while (choice != 0);
 
     if (!selected_dishes.empty()) {
-        orders_db::CreateOrder(&orders_, user_id, selected_dishes, total);
-        orders_db::Save(orders_, orders_file_);
-        std::cout << "Order created! Total: " << total << " rub.\n";
+        if (balance >= total) {
+            orders_db::CreateOrder(&orders_, user_id, selected_dishes, total);
+            orders_db::Save(orders_, orders_file_);
+            users_db::Deposit(&user_accounts_, user_id, -total);
+            balance -= total;
+            std::cout << "Order created! Total: " << total << " rub." << std::endl << "Balance after order: " << balance << " rub." << std::endl;
+        }
+        else {
+            double differens = total - balance;
+            std::cout << "You haven't enought money. Please, add " << differens << " rub." << std::endl;
+        }
     }
     else {
         std::cout << "No dishes selected. Order cancelled.\n";
@@ -433,4 +439,5 @@ void RestaurantApp::ShowUserList() {
         std::cout << "ID: " << pair.first
             << ", Balance: " << pair.second << " rub.\n";
     }
+
 }
