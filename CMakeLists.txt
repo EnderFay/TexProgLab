@@ -7,12 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # === Сервер ===
 add_executable(server
     server.cpp
-    Realization_of_clode_monet.cpp
+    Realization_of_CLode.cpp
+
 )
 
 # === Клиент ===
 add_executable(clode_monet
-    clode_monet.cpp
+    CLode_monet_new.cpp
+    Realization_of_CLode.cpp
 )
 
 # === Winsock ===

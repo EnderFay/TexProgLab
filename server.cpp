@@ -1,4 +1,4 @@
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
+﻿#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -7,20 +7,20 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
-#include "Clode_monet.h"
+#include "Clode_monet_new.h"
 #include "network_protocol.h"
 #include "utils.h"
 
-
+// Class
 class Server {
 private:
-    WSADATA wsa;
-    SOCKET listen_socket;
-    RestaurantApp app;
-    bool is_admin;
+    WSADATA wsa_;
+    SOCKET listen_socket_;
+    RestaurantApp app_;
+    bool is_admin_;
 
     std::string receive(SOCKET client) {
-        char buffer[4096] = {0};
+        char buffer[4096] = { 0 };
         int bytes = recv(client, buffer, sizeof(buffer) - 1, 0);
         if (bytes <= 0) return "";
         buffer[bytes] = '\0';
@@ -45,16 +45,16 @@ private:
     }
 
 public:
-    Server() : listen_socket(INVALID_SOCKET), is_admin(false) {}
+    Server() : listen_socket_(INVALID_SOCKET), is_admin_(false) {}
 
     bool init(const std::string& ip, int port) {
-        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        if (WSAStartup(MAKEWORD(2, 2), &wsa_) != 0) {
             std::cerr << "WSAStartup failed\n";
             return false;
         }
 
-        listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (listen_socket == INVALID_SOCKET) {
+        listen_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listen_socket_ == INVALID_SOCKET) {
             std::cerr << "Socket creation failed\n";
             WSACleanup();
             return false;
@@ -65,16 +65,16 @@ public:
         addr.sin_port = htons(port);
         inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
 
-        if (bind(listen_socket, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        if (bind(listen_socket_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             std::cerr << "Bind failed\n";
-            closesocket(listen_socket);
+            closesocket(listen_socket_);
             WSACleanup();
             return false;
         }
 
-        if (listen(listen_socket, SOMAXCONN) == SOCKET_ERROR) {
+        if (listen(listen_socket_, SOMAXCONN) == SOCKET_ERROR) {
             std::cerr << "Listen failed\n";
-            closesocket(listen_socket);
+            closesocket(listen_socket_);
             WSACleanup();
             return false;
         }
@@ -85,7 +85,7 @@ public:
 
     void run() {
         while (true) {
-            SOCKET client = accept(listen_socket, nullptr, nullptr);
+            SOCKET client = accept(listen_socket_, nullptr, nullptr);
             if (client == INVALID_SOCKET) {
                 std::cerr << "Accept failed\n";
                 continue;
@@ -99,14 +99,22 @@ public:
     }
 
     void handle_client(SOCKET client) {
+        RestaurantApp app;
         int current_user_id = -1;
-        is_admin = false;
+        is_admin_ = false;
+
+        app.ReloadUsers();
+        menu_db::Load(&app.GetMenuMutable(), app.GetMenuFile());
+        users_db::Load(&app.GetUserAccountsMutable(), app.GetUsersFile());
+        orders_db::Load(&app.GetOrdersMutable(), app.GetOrdersFile());
+
+        std::cout << "Data loaded for new client.\n";
 
         while (true) {
             std::string msg = receive(client);
             if (msg.empty()) break;
 
-            // Убираем \n
+            
             if (!msg.empty() && msg.back() == '\n') msg.pop_back();
             if (!msg.empty() && msg.back() == '\r') msg.pop_back();
 
@@ -118,39 +126,48 @@ public:
                 std::string password;
                 iss >> password;
                 if (password == "1234") {
-                    is_admin = true;
+                    is_admin_ = true;
                     current_user_id = -1;
                     send_ok(client);
-                } else {
+                    std::cout << "Admin logged in successfully.\n";
+                }
+                else {
                     send_error(client, "Wrong password");
+                    std::cout << "Admin login failed: wrong password '" << password << "'\n";
                 }
             }
             else if (command == CMD_LOGIN_USER) {
                 int user_id;
                 iss >> user_id;
+
                 if (!app.UserExists(user_id)) {
                     app.AddUser(user_id);
+                    std::cout << "Created new user with ID " << user_id << " and balance 0.0\n";
+                    users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
                 }
+
+                // Autorize user
                 current_user_id = user_id;
-                is_admin = false;
-                send_ok(client);
+                is_admin_ = false;
+                send_ok(client);  // Send RES_OK
             }
             else if (command == CMD_LOGOUT) {
-                is_admin = false;
+                is_admin_ = false;
                 current_user_id = -1;
                 send_ok(client);
             }
-            else if (!is_admin && current_user_id == -1 && command != CMD_LOGIN_USER && command != CMD_LOGIN_ADMIN) {
+            else if (!is_admin_ && current_user_id == -1 && command != CMD_LOGIN_USER && command != CMD_LOGIN_ADMIN) {
                 send_error(client, "Not authorized");
                 continue;
             }
 
-            // === ПОЛЬЗОВАТЕЛЬСКИЕ КОМАНДЫ ===
+            // command users
             if (command == CMD_SHOW_MENU) {
                 std::vector<std::string> lines;
                 if (app.GetMenu().empty()) {
                     lines.push_back("Menu is empty.");
-                } else {
+                }
+                else {
                     for (size_t i = 0; i < app.GetMenu().size(); ++i) {
                         std::ostringstream oss;
                         oss << (i + 1) << ". " << app.GetMenu()[i].name << " - " << app.GetMenu()[i].price << " rub.";
@@ -162,24 +179,58 @@ public:
             else if (command == CMD_CREATE_ORDER) {
                 std::vector<std::string> dishes;
                 double total = 0.0;
-                std::string token;
+                int token;
+
                 while (iss >> token) {
-                    // token — это имя блюда
-                    auto it = std::find_if(app.GetMenu().begin(), app.GetMenu().end(),
-                        [&token](const Dish& d) { return d.name == token; });
-                    if (it != app.GetMenu().end()) {
-                        dishes.push_back(it->name);
-                        total += it->price;
+                    if (token > 0 && token <= app.GetMenu().size()) {
+                        const Dish& dish = app.GetMenu()[token - 1];
+                        dishes.push_back(dish.name);
+                        total += dish.price;
+                    }
+                    else {
+                        send_error(client, "Invalid dish number: " + std::to_string(token));
+                        return;
                     }
                 }
-                if (!dishes.empty()) {
-                    orders_db::CreateOrder(&app.GetOrdersMutable(), current_user_id, dishes, total);
-                    orders_db::Save(app.GetOrders(), app.GetOrdersFile());
-                    send_str(client, RES_OK + std::string(" ") + std::to_string(total));
-                } else {
+
+                if (dishes.empty()) {
                     send_error(client, "No valid dishes");
+                    return;
                 }
+
+                double balance = app.GetAccountBalance(current_user_id);
+                if (balance < total) {
+                    send_error(client,
+                        "Insufficient funds. Required: " +
+                        std::to_string(total) +
+                        " rub., Available: " +
+                        std::to_string(balance) + " rub."
+                    );
+                    return;
+                }
+
+                orders_db::CreateOrder(&app.GetOrdersMutable(), current_user_id, dishes,total
+                );
+
+                try {
+                    users_db::Deposit(&app.GetUserAccountsMutable(), current_user_id, -total);
+                    users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
+                }
+                catch (const std::exception& e) {
+                    send_error(client, "Failed to deduct funds: " + std::string(e.what()));
+                    return;
+                }
+
+                orders_db::Save(app.GetOrders(), app.GetOrdersFile());
+
+                send_str(client,
+                    std::string(RES_OK) + " " +
+                    std::to_string(total) + " " +
+                    "(Balance after order: " +
+                    std::to_string(app.GetAccountBalance(current_user_id)) + ")"
+                );
             }
+
             else if (command == CMD_CHECK_STATUS) {
                 std::vector<std::string> lines;
                 bool found = false;
@@ -195,22 +246,56 @@ public:
                 send_list(client, lines);
             }
             else if (command == CMD_DEPOSIT) {
+                if (current_user_id == -1) {
+                    send_error(client, "Not authorized");
+                    std::cout << "DEBUG: Deposit rejected - user not authorized" << std::endl;
+                    continue;
+                }
+
+                std::cout << "DEBUG: DEPOSIT command received. User ID: " << current_user_id << std::endl;
+
+                if (!app.UserExists(current_user_id)) {
+                    std::cout << "DEBUG: User not found!" << std::endl;
+                    send_error(client, "User not found");
+                    continue;
+                }
+
                 double amount;
-                iss >> amount;
-                if (amount > 0) {
+                if (!(iss >> amount)) {
+                    std::cout << "DEBUG: Failed to parse deposit amount" << std::endl;
+                    send_error(client, "Invalid amount format");
+                    continue;
+                }
+
+                std::cout << "DEBUG: Amount = " << amount << std::endl;
+
+                if (amount <= 0) {
+                    std::cout << "DEBUG: Invalid deposit amount: " << amount << std::endl;
+                    send_error(client, "Invalid amount");
+                    continue;
+                }
+
+                try {
                     users_db::Deposit(&app.GetUserAccountsMutable(), current_user_id, amount);
                     users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
-                    send_str(client, RES_OK + std::string(" ") + std::to_string(app.GetAccountBalance(current_user_id)));
-                } else {
-                    send_error(client, "Invalid amount");
+
+                    double new_balance = app.GetAccountBalance(current_user_id);
+                    std::cout << "DEBUG: New balance = " << new_balance << std::endl;
+
+                    send_str(client, std::string(RES_OK) + " " + std::to_string(new_balance));
+                    std::cout << "DEBUG: Deposit successful. Sent response: OK " << new_balance << std::endl;
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "ERROR: Deposit failed - " << e.what() << std::endl;
+                    send_error(client, "Deposit operation failed");
                 }
             }
             else if (command == CMD_GET_BALANCE) {
                 send_str(client, std::to_string(app.GetAccountBalance(current_user_id)));
             }
 
-            // === АДМИН КОМАНДЫ ===
-            else if (is_admin) {
+            // command admins in admin path
+            else if (is_admin_) {
                 if (command == CMD_ADMIN_SHOW_MENU) {
                     std::vector<std::string> lines;
                     for (size_t i = 0; i < app.GetMenu().size(); ++i) {
@@ -226,11 +311,12 @@ public:
                     std::getline(iss >> std::ws, name, ';');
                     iss >> price;
                     if (price > 0 && !name.empty()) {
-                        Dish d = {name, price};
+                        Dish d = { name, price };
                         menu_db::AddDish(&app.GetMenuMutable(), d);
                         menu_db::Save(app.GetMenu(), app.GetMenuFile());
                         send_ok(client);
-                    } else {
+                    }
+                    else {
                         send_error(client, "Invalid data");
                     }
                 }
@@ -241,7 +327,8 @@ public:
                         menu_db::RemoveDish(&app.GetMenuMutable(), idx - 1);
                         menu_db::Save(app.GetMenu(), app.GetMenuFile());
                         send_ok(client);
-                    } else {
+                    }
+                    else {
                         send_error(client, "Invalid index");
                     }
                 }
@@ -263,7 +350,8 @@ public:
                         users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
                         orders_db::Save(app.GetOrders(), app.GetOrdersFile());
                         send_ok(client);
-                    } else {
+                    }
+                    else {
                         send_error(client, "User not found");
                     }
                 }
@@ -286,18 +374,27 @@ public:
                         oss << "ID:" << p.first << " Balance:" << p.second;
                         lines.push_back(oss.str());
                     }
-                    if (lines.empty()) lines.push_back("No users.");
+                    if (lines.empty()) {
+                        lines.push_back("No users found");
+                    }
                     send_list(client, lines);
                 }
             }
             else {
+                std::cout << "DEBUG: UNKNOWN COMMAND: '" << command << "'" << std::endl;
                 send_error(client, "Unknown command or access denied");
             }
         }
+
+        // save after exit server
+        users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
+        orders_db::Save(app.GetOrders(), app.GetOrdersFile());
+        menu_db::Save(app.GetMenu(), app.GetMenuFile());
     }
 
+
     ~Server() {
-        if (listen_socket != INVALID_SOCKET) closesocket(listen_socket);
+        if (listen_socket_ != INVALID_SOCKET) closesocket(listen_socket_);
         WSACleanup();
     }
 };

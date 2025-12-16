@@ -1,12 +1,11 @@
-// network_protocol.h
 #ifndef NETWORK_PROTOCOL_H
 #define NETWORK_PROTOCOL_H
 
 #include <string>
 #include <vector>
 
-// Команды от клиента
-#define CMD_LOGIN_ADMIN      "LOGIN_ADMIN"
+// clients command
+#define CMD_LOGIN_ADMIN     "LOGIN_ADMIN"
 #define CMD_LOGIN_USER       "LOGIN_USER"
 #define CMD_LOGOUT           "LOGOUT"
 #define CMD_SHOW_MENU        "SHOW_MENU"
@@ -23,16 +22,16 @@
 #define CMD_ADMIN_SHOW_USERS    "ADMIN_SHOW_USERS"
 #define CMD_ADMIN_SHOW_MENU     "ADMIN_SHOW_MENU"
 
-// Ответы сервера
+// server's answers
 #define RES_OK               "OK"
 #define RES_ERROR            "ERROR"
 #define RES_DENIED           "DENIED"
 #define RES_NOT_FOUND        "NOT_FOUND"
-#define RES_END              "END"  // конец списка
+#define RES_END              "END"  // end of list
 #define RES_SEPARATOR        "|"
 
-// Специальные
-#define SEP                  ";"  // разделитель в командах
+// special
+#define SEP                  ";"  // parser
 #define END_MSG              "\n"
 
 #endif
