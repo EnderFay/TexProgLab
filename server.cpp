@@ -1,7 +1,15 @@
-﻿#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#ifdef _WIN32
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <cstring>
+#endif
 #include <iostream>
 #include <string>
 #include <vector>
@@ -14,7 +22,9 @@
 // Class
 class Server {
 private:
+#ifdef _WIN32
     WSADATA wsa_;
+#endif
     SOCKET listen_socket_;
     RestaurantApp app_;
     bool is_admin_;
@@ -48,15 +58,18 @@ public:
     Server() : listen_socket_(INVALID_SOCKET), is_admin_(false) {}
 
     bool init(const std::string& ip, int port) {
+        #ifdef _WIN32
         if (WSAStartup(MAKEWORD(2, 2), &wsa_) != 0) {
             std::cerr << "WSAStartup failed\n";
             return false;
         }
-
+#endif
         listen_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listen_socket_ == INVALID_SOCKET) {
             std::cerr << "Socket creation failed\n";
+            #ifdef _WIN32
             WSACleanup();
+            #endif
             return false;
         }
 
@@ -68,14 +81,18 @@ public:
         if (bind(listen_socket_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             std::cerr << "Bind failed\n";
             closesocket(listen_socket_);
+            #ifdef _WIN32
             WSACleanup();
+            #endif
             return false;
         }
 
         if (listen(listen_socket_, SOMAXCONN) == SOCKET_ERROR) {
             std::cerr << "Listen failed\n";
             closesocket(listen_socket_);
+            #ifdef _WIN32
             WSACleanup();
+            #endif
             return false;
         }
 
@@ -395,7 +412,9 @@ public:
 
     ~Server() {
         if (listen_socket_ != INVALID_SOCKET) closesocket(listen_socket_);
+        #ifdef _WIN32
         WSACleanup();
+        #endif
     }
 };
 
@@ -406,4 +425,5 @@ int main() {
     }
     server.run();
     return 0;
+
 }
