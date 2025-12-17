@@ -17,6 +17,12 @@ add_executable(clode_monet
     Realization_of_CLode.cpp
 )
 
+# Тест кросс-платформенности
+add_executable(test_platform test_platform_lab.cpp)
+if(WIN32)
+    target_link_libraries(test_platform ws2_32)
+endif()
+
 # === Winsock ===
 if(WIN32)
     target_link_libraries(server PRIVATE Ws2_32)
@@ -27,4 +33,5 @@ endif()
 file(GLOB DATA_FILES "*.txt")
 foreach(file ${DATA_FILES})
     configure_file(${file} ${CMAKE_BINARY_DIR}/ COPYONLY)
+
 endforeach()
