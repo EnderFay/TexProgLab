@@ -319,7 +319,7 @@ void ClodeMonetClient::run() {
             if (sock != INVALID_SOCKET) {
                 closesocket(sock);
                 #ifdef _WIN32
-                Cleanup();
+                WSACleanup();
                 #endif
                 sock = INVALID_SOCKET;
             }
@@ -725,3 +725,4 @@ void ClodeMonetClient::user_menu() {
     }
 
 }
+
