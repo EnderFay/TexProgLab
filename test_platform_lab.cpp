@@ -1,3 +1,5 @@
+#include <iostream>
+#include "CLode_monet_new.h"
 int main(){
   std::cout<< "Кросс-платформенная проверка:\n";
 
