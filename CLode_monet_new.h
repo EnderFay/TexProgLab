@@ -15,7 +15,6 @@
 #include <arpa/inet.h>
 #include <cstring>
 #include <netdb.h>
-#endif
 
 #define SOCKET int
 #define INVALID_SOCKET -1
@@ -26,7 +25,7 @@
 #define closesocket close
 #define SOCKET_ERROR_TYPE -1
 #define CLOSE_SOCKET close
-
+#endif
 struct Dish {
     std::string name;
     double price;
@@ -136,4 +135,5 @@ public:
 
 
 #endif
+
 
