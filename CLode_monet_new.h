@@ -5,8 +5,17 @@
 #include <vector>
 #include <map>
 #include "network_protocol.h"
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <cstring>
+#include <netdb.h>
+#endif
 
 struct Dish {
     std::string name;
@@ -114,5 +123,6 @@ public:
     bool depositToServer(double amount); // H.3
     double getBalanceFromServer(); // H.4
 };
+
 
 #endif
