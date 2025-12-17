@@ -19,7 +19,6 @@
 #include "network_protocol.h"
 #include "utils.h"
 
-// Class
 class Server {
 private:
 #ifdef _WIN32
@@ -147,10 +146,12 @@ public:
                     current_user_id = -1;
                     send_ok(client);
                     std::cout << "Admin logged in successfully.\n";
+                    continue;
                 }
                 else {
                     send_error(client, "Wrong password");
                     std::cout << "Admin login failed: wrong password '" << password << "'\n";
+                    continue;
                 }
             }
             else if (command == CMD_LOGIN_USER) {
@@ -163,22 +164,22 @@ public:
                     users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
                 }
 
-                // Autorize user
                 current_user_id = user_id;
                 is_admin_ = false;
-                send_ok(client);  // Send RES_OK
+                send_ok(client);
+                continue;
             }
             else if (command == CMD_LOGOUT) {
                 is_admin_ = false;
                 current_user_id = -1;
                 send_ok(client);
+                continue;
             }
             else if (!is_admin_ && current_user_id == -1 && command != CMD_LOGIN_USER && command != CMD_LOGIN_ADMIN) {
                 send_error(client, "Not authorized");
                 continue;
             }
 
-            // command users
             if (command == CMD_SHOW_MENU) {
                 std::vector<std::string> lines;
                 if (app.GetMenu().empty()) {
@@ -192,6 +193,7 @@ public:
                     }
                 }
                 send_list(client, lines);
+                continue;
             }
             else if (command == CMD_CREATE_ORDER) {
                 std::vector<std::string> dishes;
@@ -246,6 +248,7 @@ public:
                     "(Balance after order: " +
                     std::to_string(app.GetAccountBalance(current_user_id)) + ")"
                 );
+                continue;
             }
 
             else if (command == CMD_CHECK_STATUS) {
@@ -261,6 +264,7 @@ public:
                 }
                 if (!found) lines.push_back("No orders.");
                 send_list(client, lines);
+                continue;
             }
             else if (command == CMD_DEPOSIT) {
                 if (current_user_id == -1) {
@@ -309,9 +313,9 @@ public:
             }
             else if (command == CMD_GET_BALANCE) {
                 send_str(client, std::to_string(app.GetAccountBalance(current_user_id)));
+                continue;
             }
 
-            // command admins in admin path
             else if (is_admin_) {
                 if (command == CMD_ADMIN_SHOW_MENU) {
                     std::vector<std::string> lines;
@@ -321,6 +325,7 @@ public:
                         lines.push_back(oss.str());
                     }
                     send_list(client, lines);
+                    continue;
                 }
                 else if (command == CMD_ADMIN_ADD_DISH) {
                     std::string name;
@@ -336,6 +341,7 @@ public:
                     else {
                         send_error(client, "Invalid data");
                     }
+                    continue;
                 }
                 else if (command == CMD_ADMIN_REMOVE_DISH) {
                     size_t idx;
@@ -348,6 +354,7 @@ public:
                     else {
                         send_error(client, "Invalid index");
                     }
+                    continue;
                 }
                 else if (command == CMD_ADMIN_UPDATE_STATUS) {
                     int order_id;
@@ -357,6 +364,7 @@ public:
                     orders_db::UpdateStatus(&app.GetOrdersMutable(), order_id, status);
                     orders_db::Save(app.GetOrders(), app.GetOrdersFile());
                     send_ok(client);
+                    continue;
                 }
                 else if (command == CMD_ADMIN_REMOVE_USER) {
                     int user_id;
@@ -371,6 +379,7 @@ public:
                     else {
                         send_error(client, "User not found");
                     }
+                    continue;
                 }
                 else if (command == CMD_ADMIN_SHOW_ORDERS) {
                     std::vector<std::string> lines;
@@ -383,6 +392,7 @@ public:
                     }
                     if (lines.empty()) lines.push_back("No orders.");
                     send_list(client, lines);
+                    continue;
                 }
                 else if (command == CMD_ADMIN_SHOW_USERS) {
                     std::vector<std::string> lines;
@@ -396,6 +406,7 @@ public:
                     }
                     send_list(client, lines);
                 }
+                continue;
             }
             else {
                 std::cout << "DEBUG: UNKNOWN COMMAND: '" << command << "'" << std::endl;
@@ -403,7 +414,6 @@ public:
             }
         }
 
-        // save after exit server
         users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
         orders_db::Save(app.GetOrders(), app.GetOrdersFile());
         menu_db::Save(app.GetMenu(), app.GetMenuFile());
