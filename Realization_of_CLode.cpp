@@ -1,7 +1,15 @@
-﻿#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#ifdef _WIN32
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define NOMINMAX
-#include <winsock2.h> //
-#include <ws2tcpip.h> //
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <cstring>
+#endif
 #include <iostream> //
 #include <fstream> 
 #include <sstream> //
@@ -280,7 +288,9 @@ void ClodeMonetClient::run() {
 
             if (sock != INVALID_SOCKET) {
                 closesocket(sock);
+                #ifdef _WIN32
                 WSACleanup();
+                #endif
                 sock = INVALID_SOCKET;
             }
         }
@@ -308,7 +318,9 @@ void ClodeMonetClient::run() {
 
             if (sock != INVALID_SOCKET) {
                 closesocket(sock);
-                WSACleanup();
+                #ifdef _WIN32
+                Cleanup();
+                #endif
                 sock = INVALID_SOCKET;
             }
         }
@@ -319,7 +331,9 @@ void ClodeMonetClient::run() {
 
     if (sock != INVALID_SOCKET) {
         closesocket(sock);
+        #ifdef _WIN32
         WSACleanup();
+        #endif
     }
     std::cout << "\nGood bye! See you later!\n";
 }
@@ -385,20 +399,24 @@ double ClodeMonetClient::getBalanceFromServer() {
 bool ClodeMonetClient::connect_to_server(const std::string& ip, int port) {
     if (sock != INVALID_SOCKET) {
         closesocket(sock);
+        #ifdef _WIN32
         WSACleanup();
+        #endif
         sock = INVALID_SOCKET;
     }
-
+#ifdef _WIN32
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
         std::cerr << "WSAStartup failed\n";
         return false;
     }
-
+#endif
     sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) {
         std::cerr << "Socket creation failed\n";
+        #ifdef _WIN32
         WSACleanup();
+        #endif
         return false;
     }
 
@@ -410,14 +428,18 @@ bool ClodeMonetClient::connect_to_server(const std::string& ip, int port) {
     if (addr.sin_addr.s_addr == INADDR_NONE) {
         std::cerr << "Invalid IP address\n";
         closesocket(sock);
+        #ifdef _WIN32
         WSACleanup();
+        #endif
         return false;
     }
 
     if (::connect(sock, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         std::cerr << "Connection failed. Is server running?\n";
         closesocket(sock);
+        #ifdef _WIN32
         WSACleanup();
+        #endif
         sock = INVALID_SOCKET;
         return false;
     }
@@ -701,4 +723,5 @@ void ClodeMonetClient::user_menu() {
             std::cout << "Wrong input!\n";
         }
     }
+
 }
