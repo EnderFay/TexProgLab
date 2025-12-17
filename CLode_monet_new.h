@@ -17,6 +17,16 @@
 #include <netdb.h>
 #endif
 
+#define SOCKET int
+#define INVALID_SOCKET -1
+#define SOCKET_TYPE int
+#define SOCKET_ERROR -1
+#define WSACleanup()
+#define INVALID_SOCKET_TYPE -1
+#define closesocket close
+#define SOCKET_ERROR_TYPE -1
+#define CLOSE_SOCKET close
+
 struct Dish {
     std::string name;
     double price;
@@ -126,3 +136,4 @@ public:
 
 
 #endif
+
