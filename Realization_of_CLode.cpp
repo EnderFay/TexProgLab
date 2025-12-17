@@ -666,7 +666,7 @@ void ClodeMonetClient::user_menu() {
         case 2: {
             showServerMenu();
 
-            std::cout << "\nEnter dish names (separated by space, 0 to cancel): ";
+            std::cout << "\nEnter dish numbers (separated by space, 0 to cancel): ";
             std::string input;
             std::getline(std::cin, input);
 
@@ -725,4 +725,5 @@ void ClodeMonetClient::user_menu() {
     }
 
 }
+
 
