@@ -22,7 +22,9 @@
 // Class
 class Server {
 private:
+#ifdef _WIN32
     WSADATA wsa_;
+#endif
     SOCKET listen_socket_;
     RestaurantApp app_;
     bool is_admin_;
@@ -56,15 +58,18 @@ public:
     Server() : listen_socket_(INVALID_SOCKET), is_admin_(false) {}
 
     bool init(const std::string& ip, int port) {
+        #ifdef _WIN32
         if (WSAStartup(MAKEWORD(2, 2), &wsa_) != 0) {
             std::cerr << "WSAStartup failed\n";
             return false;
         }
-
+#endif
         listen_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listen_socket_ == INVALID_SOCKET) {
             std::cerr << "Socket creation failed\n";
-            WSACleanup();
+#ifdef _WIN32
+    WSADATA wsa_;
+#endif
             return false;
         }
 
@@ -76,14 +81,18 @@ public:
         if (bind(listen_socket_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             std::cerr << "Bind failed\n";
             closesocket(listen_socket_);
-            WSACleanup();
+            #ifdef _WIN32
+            WSADATA wsa_;
+            #endif
             return false;
         }
 
         if (listen(listen_socket_, SOMAXCONN) == SOCKET_ERROR) {
             std::cerr << "Listen failed\n";
             closesocket(listen_socket_);
-            WSACleanup();
+            #ifdef _WIN32
+            WSADATA wsa_;
+            #endif
             return false;
         }
 
@@ -138,10 +147,12 @@ public:
                     current_user_id = -1;
                     send_ok(client);
                     std::cout << "Admin logged in successfully.\n";
+                    continue;
                 }
                 else {
                     send_error(client, "Wrong password");
                     std::cout << "Admin login failed: wrong password '" << password << "'\n";
+                    continue;
                 }
             }
             else if (command == CMD_LOGIN_USER) {
@@ -157,12 +168,14 @@ public:
                 // Autorize user
                 current_user_id = user_id;
                 is_admin_ = false;
-                send_ok(client);  // Send RES_OK
+                send_ok(client);
+                continue;
             }
             else if (command == CMD_LOGOUT) {
                 is_admin_ = false;
                 current_user_id = -1;
                 send_ok(client);
+                continue;
             }
             else if (!is_admin_ && current_user_id == -1 && command != CMD_LOGIN_USER && command != CMD_LOGIN_ADMIN) {
                 send_error(client, "Not authorized");
@@ -183,6 +196,7 @@ public:
                     }
                 }
                 send_list(client, lines);
+                continue;
             }
             else if (command == CMD_CREATE_ORDER) {
                 std::vector<std::string> dishes;
@@ -237,6 +251,7 @@ public:
                     "(Balance after order: " +
                     std::to_string(app.GetAccountBalance(current_user_id)) + ")"
                 );
+                continue;
             }
 
             else if (command == CMD_CHECK_STATUS) {
@@ -252,6 +267,7 @@ public:
                 }
                 if (!found) lines.push_back("No orders.");
                 send_list(client, lines);
+                continue;
             }
             else if (command == CMD_DEPOSIT) {
                 if (current_user_id == -1) {
@@ -300,6 +316,7 @@ public:
             }
             else if (command == CMD_GET_BALANCE) {
                 send_str(client, std::to_string(app.GetAccountBalance(current_user_id)));
+                continue;
             }
 
             // command admins in admin path
@@ -312,6 +329,7 @@ public:
                         lines.push_back(oss.str());
                     }
                     send_list(client, lines);
+                    continue;
                 }
                 else if (command == CMD_ADMIN_ADD_DISH) {
                     std::string name;
@@ -327,6 +345,7 @@ public:
                     else {
                         send_error(client, "Invalid data");
                     }
+                    continue;
                 }
                 else if (command == CMD_ADMIN_REMOVE_DISH) {
                     size_t idx;
@@ -339,6 +358,7 @@ public:
                     else {
                         send_error(client, "Invalid index");
                     }
+                    continue;
                 }
                 else if (command == CMD_ADMIN_UPDATE_STATUS) {
                     int order_id;
@@ -348,6 +368,7 @@ public:
                     orders_db::UpdateStatus(&app.GetOrdersMutable(), order_id, status);
                     orders_db::Save(app.GetOrders(), app.GetOrdersFile());
                     send_ok(client);
+                    continue;
                 }
                 else if (command == CMD_ADMIN_REMOVE_USER) {
                     int user_id;
@@ -362,6 +383,7 @@ public:
                     else {
                         send_error(client, "User not found");
                     }
+                    continue;
                 }
                 else if (command == CMD_ADMIN_SHOW_ORDERS) {
                     std::vector<std::string> lines;
@@ -374,6 +396,7 @@ public:
                     }
                     if (lines.empty()) lines.push_back("No orders.");
                     send_list(client, lines);
+                    continue;
                 }
                 else if (command == CMD_ADMIN_SHOW_USERS) {
                     std::vector<std::string> lines;
@@ -387,6 +410,7 @@ public:
                     }
                     send_list(client, lines);
                 }
+                continue;
             }
             else {
                 std::cout << "DEBUG: UNKNOWN COMMAND: '" << command << "'" << std::endl;
@@ -416,3 +440,4 @@ int main() {
     return 0;
 
 }
+
