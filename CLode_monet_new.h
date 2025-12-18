@@ -5,8 +5,27 @@
 #include <vector>
 #include <map>
 #include "network_protocol.h"
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <cstring>
+#include <netdb.h>
+
+#define SOCKET int
+#define INVALID_SOCKET -1
+#define SOCKET_TYPE int
+#define SOCKET_ERROR -1
+#define WSACleanup()
+#define INVALID_SOCKET_TYPE -1
+#define closesocket close
+#define SOCKET_ERROR_TYPE -1
+#define CLOSE_SOCKET close
+#endif
 
 struct Dish {
     std::string name;
@@ -114,5 +133,6 @@ public:
     bool depositToServer(double amount); // H.3
     double getBalanceFromServer(); // H.4
 };
+
 
 #endif
