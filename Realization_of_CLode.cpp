@@ -1,7 +1,15 @@
-﻿#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#ifdef _WIN32
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define NOMINMAX
-#include <winsock2.h> //
-#include <ws2tcpip.h> //
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <cstring>
+#endif
 #include <iostream> //
 #include <fstream> 
 #include <sstream> //
@@ -701,4 +709,5 @@ void ClodeMonetClient::user_menu() {
             std::cout << "Wrong input!\n";
         }
     }
+
 }
