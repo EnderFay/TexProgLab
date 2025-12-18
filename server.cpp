@@ -427,7 +427,9 @@ public:
 
     ~Server() {
         if (listen_socket_ != INVALID_SOCKET) closesocket(listen_socket_);
+        #ifdef _WIN32
         WSACleanup();
+        #endif
     }
 };
 
@@ -440,5 +442,6 @@ int main() {
     return 0;
 
 }
+
 
 
