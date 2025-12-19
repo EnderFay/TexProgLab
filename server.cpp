@@ -1,7 +1,9 @@
 ﻿#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define NOMINMAX
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -11,6 +13,7 @@
 #include <iomanip>
 #include <thread>
 #include <mutex>
+
 #include "Clode_monet_new.h"
 #include "network_protocol.h"
 #include "utils.h"
@@ -28,21 +31,24 @@ std::string getCurrentTime() {
     return ss.str();
 }
 
+// Server class for handling restaurant application network operations
 class Server {
 private:
-    WSADATA wsa_;
-    SOCKET listen_socket_;
-    bool is_admin_;
+    WSADATA wsa_;    // Windows Sockets initialization data
+    SOCKET listen_socket_;    // Main listening socket for incoming connections
+    bool is_admin_;    // Flag indicating admin authentication status
     Logger& logger_;
 
+    // Receives data from a client socket
+    // Returns empty string on connection closed or error
     std::string receive(SOCKET client) {
         char buffer[4096] = { 0 };
-        int bytes = recv(client, buffer, sizeof(buffer) - 1, 0);
+        int bytes = recv(client, buffer, sizeof(buffer) - 1, 0);    // Receive data
         if (bytes <= 0) {
             logger_.network_error("Connection closed or error");
-            return "";
+            return "";    // Connection closed or error
         }
-        buffer[bytes] = '\0';
+        buffer[bytes] = '\0';    // Null-terminate received data
         std::string msg = buffer;
 
         if (!msg.empty() && msg.back() == '\n') msg.pop_back();
@@ -51,64 +57,76 @@ private:
         return msg;
     }
 
+    // Sends a string message to client with message terminator
     void send_str(SOCKET client, const std::string& msg) {
-        std::string full = msg + END_MSG;
+        std::string full = msg + END_MSG;    // Append message terminator
         logger_.network_out(msg);
-        send(client, full.c_str(), (int)full.size(), 0);
+        send(client, full.c_str(), (int)full.size(), 0);    // Send complete message
     }
 
+    // Sends standard OK response to client
     void send_ok(SOCKET client) {
         logger_.debug("Sending OK response");
         send_str(client, RES_OK);
     }
 
+    // Sends error response to client with optional error message
     void send_error(SOCKET client, const std::string& err = "") {
         std::string error_msg = RES_ERROR + (err.empty() ? "" : " " + err);
         logger_.warn("Sending ERROR: {}", error_msg);
         send_str(client, error_msg);
     }
 
+    // Sends a list of items as multiple messages terminated with RES_END
     void send_list(SOCKET client, const std::vector<std::string>& items) {
         logger_.debug("Sending list with {} items", items.size());
         for (const auto& item : items) {
-            send_str(client, item);
+            send_str(client, item);    // Send each item separately
         }
-        send_str(client, RES_END);
+        send_str(client, RES_END);    // Send list terminator
     }
 
 public:
+    // Constructor - initializes socket as invalid and admin flag as false
     Server() : listen_socket_(INVALID_SOCKET), is_admin_(false),
         logger_(get_server_logger()) {
         logger_.info("Server object created");
     }
 
+    // Initializes server socket and binds to specified IP and port
+    // Returns true on success, false on failure
     bool init(const std::string& ip, int port) {
         logger_.info("Initializing server on {}:{}", ip, port);
 
+        // Initialize Winsock2 on Windows
         if (WSAStartup(MAKEWORD(2, 2), &wsa_) != 0) {
             logger_.error("WSAStartup failed");
             return false;
         }
 
+        // Create TCP socket for IPv4
         listen_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listen_socket_ == INVALID_SOCKET) {
             logger_.error("Socket creation failed");
-            WSACleanup();
+            WSACleanup();    // Cleanup Winsock on failure
             return false;
         }
 
+        // Configure server address structure
         sockaddr_in addr;
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
-        inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
+        addr.sin_family = AF_INET;    // IPv4 address family
+        addr.sin_port = htons(port);     // Convert port to network byte order
+        inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);    // Convert IP string to binary
 
+        // Bind socket to specified address and port
         if (bind(listen_socket_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
             logger_.error("Bind failed on port {}", port);
-            closesocket(listen_socket_);
+            closesocket(listen_socket_);    // Close socket on failure
             WSACleanup();
             return false;
         }
 
+        // Start listening for incoming connections
         if (listen(listen_socket_, SOMAXCONN) == SOCKET_ERROR) {
             logger_.error("Listen failed");
             closesocket(listen_socket_);
@@ -135,10 +153,12 @@ public:
         return true;
     }
 
+    // Main server loop - accepts and handles client connections
     void run() {
         logger_.info("Server entering main loop, waiting for connections");
 
         while (true) {
+            // Accept incoming client connection
             SOCKET client = accept(listen_socket_, nullptr, nullptr);
             if (client == INVALID_SOCKET) {
                 logger_.error("Accept failed");
@@ -164,17 +184,20 @@ public:
         }
     }
 
+    // Handles communication with a single client
     void handle_client(SOCKET client, const std::string& client_ip) {
         logger_.info("Starting new client session for {}", client_ip);
 
-        int current_user_id = -1;
-        bool is_admin_local = false;
+        int current_user_id = -1;    // Current user ID (-1 = not logged in)
+        bool is_admin_local = false;    // Reset admin flag for new client
 
+        // Main command processing loop
         while (true) {
+            // Receive message from client
             std::string msg = receive(client);
             if (msg.empty()) {
                 logger_.info("Client {} disconnected or connection lost", client_ip);
-                break;
+                break;    // Break if connection closed
             }
 
             logger_.network_in(msg);
@@ -185,6 +208,7 @@ public:
             std::string command;
             iss >> command;
 
+            // Admin login command
             if (command == CMD_LOGIN_ADMIN) {
                 std::string password;
                 iss >> password;
@@ -203,6 +227,8 @@ public:
                 }
                 continue;
             }
+
+            // User login command
             else if (command == CMD_LOGIN_USER) {
                 int user_id;
                 iss >> user_id;
@@ -211,6 +237,7 @@ public:
 
                 std::lock_guard<std::mutex> lock(app_mutex);
 
+                // Create new user if doesn't exist
                 if (!global_app->UserExists(user_id)) {
                     global_app->AddUser(user_id);
                     logger_.user_created(user_id, 0.0);
@@ -222,6 +249,8 @@ public:
                 logger_.auth_success(user_id, false);
                 continue;
             }
+
+            // Logout command
             else if (command == CMD_LOGOUT) {
                 logger_.info("Logout requested by {}",
                     is_admin_local ? "ADMIN" : "USER_" + std::to_string(current_user_id));
@@ -231,6 +260,7 @@ public:
                 continue;
             }
 
+            // Authorization check - must be logged in for other commands
             if (!is_admin_local && current_user_id == -1) {
                 logger_.warn("Unauthorized access attempt: {}", command);
                 send_error(client, "Not authorized");
@@ -240,6 +270,7 @@ public:
             // processing user commands
             std::lock_guard<std::mutex> lock(app_mutex);
 
+            // Display menu to user
             if (command == CMD_SHOW_MENU) {
                 logger_.command_received("SHOW_MENU", "user_id=" + std::to_string(current_user_id));
 
@@ -249,6 +280,7 @@ public:
                     logger_.debug("Menu is empty");
                 }
                 else {
+                    // Format each menu item with index, name, and price
                     for (size_t i = 0; i < global_app->GetMenu().size(); ++i) {
                         std::ostringstream oss;
                         oss << (i + 1) << ". " << global_app->GetMenu()[i].name
@@ -259,6 +291,8 @@ public:
                 }
                 send_list(client, lines);
             }
+
+            // Create new order
             else if (command == CMD_CREATE_ORDER) {
                 logger_.command_received("CREATE_ORDER", "user_id=" + std::to_string(current_user_id));
 
@@ -272,6 +306,7 @@ public:
                 std::getline(iss, remaining_input);
 
                 std::istringstream token_stream(remaining_input);
+                // Parse dish numbers from command
                 while (token_stream >> token) {
                     dish_numbers.push_back(token);
                     if (token > 0 && token <= (int)global_app->GetMenu().size()) {
@@ -288,12 +323,14 @@ public:
                     }
                 }
 
+                // Validate at least one dish was selected
                 if (dishes.empty()) {
                     logger_.warn("Empty order attempt by user {}", current_user_id);
                     send_error(client, "No valid dishes");
                     goto next_command;
                 }
 
+                // Check user has sufficient balance
                 double balance = global_app->GetAccountBalance(current_user_id);
                 logger_.debug("Balance check: user={}, balance={}, required={}",
                     current_user_id, balance, total);
@@ -306,8 +343,9 @@ public:
                     goto next_command;
                 }
 
+                
                 int new_order_id = global_app->GetOrders().empty() ? 1 : global_app->GetOrders().back().id + 1;
-                orders_db::CreateOrder(&global_app->GetOrdersMutable(), current_user_id, dishes, total);
+                orders_db::CreateOrder(&global_app->GetOrdersMutable(), current_user_id, dishes, total);    // Create order in database
                 logger_.order_created(new_order_id, current_user_id, total);
 
                 double old_balance = global_app->GetAccountBalance(current_user_id);
@@ -323,11 +361,14 @@ public:
                 logger_.command_success("CREATE_ORDER", "user=" + std::to_string(current_user_id) +
                     ", total=" + std::to_string(total));
             }
+
+            // Check order status for current user
             else if (command == CMD_CHECK_STATUS) {
                 logger_.command_received("CHECK_STATUS", "user_id=" + std::to_string(current_user_id));
 
                 std::vector<std::string> lines;
                 bool found = false;
+                // Find all orders for current user
                 for (const auto& o : global_app->GetOrders()) {
                     if (o.user_id == current_user_id) {
                         std::ostringstream oss;
@@ -370,6 +411,7 @@ public:
                     goto next_command;
                 }
 
+                // Process deposit
                 try {
                     double old_balance = global_app->GetAccountBalance(current_user_id);
                     users_db::Deposit(&global_app->GetUserAccountsMutable(), current_user_id, amount);
@@ -387,6 +429,8 @@ public:
                     send_error(client, "Deposit operation failed");
                 }
             }
+
+            // Get current user balance
             else if (command == CMD_GET_BALANCE) {
                 logger_.command_received("GET_BALANCE", "user_id=" + std::to_string(current_user_id));
 
@@ -395,7 +439,7 @@ public:
                 send_str(client, std::to_string(balance));
             }
             else if (is_admin_local) {
-                // admin commands
+                // Admin view of menu
                 if (command == CMD_ADMIN_SHOW_MENU) {
                     logger_.command_received("ADMIN_SHOW_MENU");
 
@@ -409,6 +453,8 @@ public:
                     logger_.debug("Sending admin menu with {} items", lines.size());
                     send_list(client, lines);
                 }
+
+                // Add new dish to menu
                 else if (command == CMD_ADMIN_ADD_DISH) {
                     std::string name;
                     double price;
@@ -429,6 +475,8 @@ public:
                         send_error(client, "Invalid data");
                     }
                 }
+
+                // Remove dish from menu by index
                 else if (command == CMD_ADMIN_REMOVE_DISH) {
                     size_t idx;
                     iss >> idx;
@@ -447,6 +495,8 @@ public:
                         send_error(client, "Invalid index");
                     }
                 }
+
+                // Update order status
                 else if (command == CMD_ADMIN_UPDATE_STATUS) {
                     int order_id;
                     std::string status;
@@ -481,6 +531,8 @@ public:
                         send_error(client, "Order not found");
                     }
                 }
+
+                // Remove user and their orders
                 else if (command == CMD_ADMIN_REMOVE_USER) {
                     int user_id;
                     iss >> user_id;
@@ -506,6 +558,8 @@ public:
                         send_error(client, "User not found");
                     }
                 }
+
+                // Display all orders
                 else if (command == CMD_ADMIN_SHOW_ORDERS) {
                     logger_.command_received("ADMIN_SHOW_ORDERS");
 
@@ -527,6 +581,8 @@ public:
                     }
                     send_list(client, lines);
                 }
+
+                // Display all users with balances
                 else if (command == CMD_ADMIN_SHOW_USERS) {
                     logger_.command_received("ADMIN_SHOW_USERS");
 
@@ -568,6 +624,7 @@ public:
         std::cout << "==========================================\n" << std::endl;
     }
 
+     // Destructor - cleanup resources
     ~Server() {
         logger_.info("Server shutting down");
         if (listen_socket_ != INVALID_SOCKET) {
@@ -590,11 +647,14 @@ public:
     }
 };
 
+// Main function - server entry point
 int main() {
-    Server server;
+    Server server;    // Create server instance
+    // Initialize server on localhost port 8080
     if (!server.init("0.0.0.0", 8080)) {
-        return 1;
+        return 1;    // Exit with error code if initialization fails
     }
-    server.run();
-    return 0;
+    server.run();    // Start server main loop
+    return 0;    // Normal exit
 }
+
