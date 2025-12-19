@@ -1,60 +1,75 @@
-#ifdef _WIN32
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
+﻿#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#else
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <cstring>
-#endif
-
 #include <iostream>
 #include <string>
 #include <vector>
 #include <sstream>
 #include <algorithm>
-
-#include "CLode_monet_new.h"
+#include <chrono>
+#include <iomanip>
+#include <thread>
+#include <mutex>
+#include "Clode_monet_new.h"
 #include "network_protocol.h"
 #include "utils.h"
+#include "logger.h"
 
+// GLOBAL OBJECT ANG MUTEX 
+RestaurantApp* global_app = nullptr;
+std::mutex app_mutex;
 
-// Server class for handling restaurant application network operations
+std::string getCurrentTime() {
+    auto now = std::chrono::system_clock::now();
+    auto now_c = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_c), "%H:%M:%S");
+    return ss.str();
+}
+
 class Server {
 private:
-#ifdef _WIN32
-    WSADATA wsa_;    // Windows Sockets initialization data
-#endif
-    SOCKET listen_socket_;    // Main listening socket for incoming connections
-    RestaurantApp app_;
+    WSADATA wsa_;
+    SOCKET listen_socket_;
     bool is_admin_;
+    Logger& logger_;
 
     std::string receive(SOCKET client) {
         char buffer[4096] = { 0 };
-        int bytes = recv(client, buffer, sizeof(buffer) - 1, 0);    // Receive data
-        if (bytes <= 0) return "";
+        int bytes = recv(client, buffer, sizeof(buffer) - 1, 0);
+        if (bytes <= 0) {
+            logger_.network_error("Connection closed or error");
+            return "";
+        }
         buffer[bytes] = '\0';
-        return std::string(buffer);
+        std::string msg = buffer;
+
+        if (!msg.empty() && msg.back() == '\n') msg.pop_back();
+        if (!msg.empty() && msg.back() == '\r') msg.pop_back();
+
+        return msg;
     }
 
-    // Sends a string message to client with message terminator
     void send_str(SOCKET client, const std::string& msg) {
         std::string full = msg + END_MSG;
+        logger_.network_out(msg);
         send(client, full.c_str(), (int)full.size(), 0);
     }
-    // Sends standard OK response to client
-    void send_ok(SOCKET client) { send_str(client, RES_OK); }
 
-     // Sends error response to client with optional error message
-    void send_error(SOCKET client, const std::string& err = "") {
-        send_str(client, RES_ERROR + (err.empty() ? "" : " " + err));
+    void send_ok(SOCKET client) {
+        logger_.debug("Sending OK response");
+        send_str(client, RES_OK);
     }
 
-    // Sends a list of items as multiple messages terminated with RES_END
+    void send_error(SOCKET client, const std::string& err = "") {
+        std::string error_msg = RES_ERROR + (err.empty() ? "" : " " + err);
+        logger_.warn("Sending ERROR: {}", error_msg);
+        send_str(client, error_msg);
+    }
+
     void send_list(SOCKET client, const std::vector<std::string>& items) {
+        logger_.debug("Sending list with {} items", items.size());
         for (const auto& item : items) {
             send_str(client, item);
         }
@@ -62,440 +77,524 @@ private:
     }
 
 public:
-    // Constructor - initializes socket as invalid and admin flag as false
-    Server() : listen_socket_(INVALID_SOCKET), is_admin_(false) {}
+    Server() : listen_socket_(INVALID_SOCKET), is_admin_(false),
+        logger_(get_server_logger()) {
+        logger_.info("Server object created");
+    }
 
-    // Initializes server socket and binds to specified IP and port
     bool init(const std::string& ip, int port) {
-        #ifdef _WIN32
-        // Initialize Winsock on Windows
+        logger_.info("Initializing server on {}:{}", ip, port);
+
         if (WSAStartup(MAKEWORD(2, 2), &wsa_) != 0) {
-            std::cerr << "WSAStartup failed\n";
+            logger_.error("WSAStartup failed");
             return false;
         }
-#endif
-        // Create TCP socket for IPv4
+
         listen_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listen_socket_ == INVALID_SOCKET) {
-            std::cerr << "Socket creation failed\n";
-            #ifdef _WIN32
-            WSACleanup();    // Cleanup Winsock on failure
-            #endif
+            logger_.error("Socket creation failed");
+            WSACleanup();
             return false;
         }
 
-        // Configure server address structure
         sockaddr_in addr;
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);    // Convert port to network byte order
-        inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);    // Convert IP string to binary
+        addr.sin_port = htons(port);
+        inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
 
-        // Bind socket to specified address and port
         if (bind(listen_socket_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-            std::cerr << "Bind failed\n";
-            closesocket(listen_socket_);    // Close socket on failure
-            #ifdef _WIN32
-            WSACleanup();
-            #endif
-            return false;
-        }
-
-        // Start listening for incoming connections
-        if (listen(listen_socket_, SOMAXCONN) == SOCKET_ERROR) {
-            std::cerr << "Listen failed\n";
+            logger_.error("Bind failed on port {}", port);
             closesocket(listen_socket_);
-            #ifdef _WIN32
             WSACleanup();
-            #endif
             return false;
         }
 
-        std::cout << "Server running on " << ip << ":" << port << "\n";
+        if (listen(listen_socket_, SOMAXCONN) == SOCKET_ERROR) {
+            logger_.error("Listen failed");
+            closesocket(listen_socket_);
+            WSACleanup();
+            return false;
+        }
+
+        // creating a global RestaurantApp one once
+        {
+            std::lock_guard<std::mutex> lock(app_mutex);
+            if (!global_app) {
+                global_app = new RestaurantApp();
+                logger_.info("Global RestaurantApp created");
+            }
+        }
+
+        std::cout << "\n==========================================" << std::endl;
+        std::cout << "[" << getCurrentTime() << "] SERVER STARTED SUCCESSFULLY" << std::endl;
+        std::cout << "Address: " << ip << ":" << port << std::endl;
+        std::cout << "Waiting for connections..." << std::endl;
+        std::cout << "==========================================\n" << std::endl;
+
+        logger_.info("Server successfully started on {}:{}", ip, port);
         return true;
     }
 
-    // Main server loop - accepts and handles client connections
     void run() {
+        logger_.info("Server entering main loop, waiting for connections");
+
         while (true) {
-            // Accept incoming client connection
             SOCKET client = accept(listen_socket_, nullptr, nullptr);
             if (client == INVALID_SOCKET) {
-                std::cerr << "Accept failed\n";
+                logger_.error("Accept failed");
                 continue;
             }
 
-            std::cout << "Client connected\n";
-            handle_client(client);    // Process client requests
-            closesocket(client);    // Close client connection
-            std::cout << "Client disconnected\n";
+            sockaddr_in client_addr;
+            int addr_len = sizeof(client_addr);
+            getpeername(client, (sockaddr*)&client_addr, &addr_len);
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+
+            logger_.info("Client connected (IP: {}, Socket: {})", client_ip, (int)client);
+
+            std::cout << "\n==========================================" << std::endl;
+            std::cout << "[" << getCurrentTime() << "] NEW CLIENT CONNECTED" << std::endl;
+            std::cout << "Client IP: " << client_ip << std::endl;
+            std::cout << "==========================================\n" << std::endl;
+
+            std::thread([this, client, client_ip]() {
+                this->handle_client(client, client_ip);
+                }).detach();
         }
     }
 
-    // Handles communication with a single client
-    void handle_client(SOCKET client) {
-        RestaurantApp app;
+    void handle_client(SOCKET client, const std::string& client_ip) {
+        logger_.info("Starting new client session for {}", client_ip);
+
         int current_user_id = -1;
-        is_admin_ = false;
+        bool is_admin_local = false;
 
-        // Load data from files for this client session
-        app.ReloadUsers();
-        menu_db::Load(&app.GetMenuMutable(), app.GetMenuFile());
-        users_db::Load(&app.GetUserAccountsMutable(), app.GetUsersFile());
-        orders_db::Load(&app.GetOrdersMutable(), app.GetOrdersFile());
-
-        std::cout << "Data loaded for new client.\n";
-
-        // Main command processing loop
         while (true) {
-             // Receive message from client
             std::string msg = receive(client);
-            if (msg.empty()) break;
+            if (msg.empty()) {
+                logger_.info("Client {} disconnected or connection lost", client_ip);
+                break;
+            }
 
-            // Remove trailing newline characters (CR/LF)
-            if (!msg.empty() && msg.back() == '\n') msg.pop_back();
-            if (!msg.empty() && msg.back() == '\r') msg.pop_back();
+            logger_.network_in(msg);
 
-            // Parse command from received message
+            std::cout << "\n[" << getCurrentTime() << "] RECEIVED FROM CLIENT: \"" << msg << "\"" << std::endl;
+
             std::istringstream iss(msg);
             std::string command;
             iss >> command;
 
-            // Admin login command
             if (command == CMD_LOGIN_ADMIN) {
                 std::string password;
                 iss >> password;
+
+                logger_.command_received("LOGIN_ADMIN");
+
                 if (password == "1234") {
-                    is_admin_ = true;
+                    is_admin_local = true;
                     current_user_id = -1;
                     send_ok(client);
-                    std::cout << "Admin logged in successfully.\n";
-                    continue;
+                    logger_.auth_success(-1, true);
                 }
                 else {
                     send_error(client, "Wrong password");
-                    std::cout << "Admin login failed: wrong password '" << password << "'\n";
-                    continue;
+                    logger_.auth_failed(-1, true, "Wrong password");
                 }
+                continue;
             }
-
-            // User login command
             else if (command == CMD_LOGIN_USER) {
                 int user_id;
                 iss >> user_id;
-                // Create new user if doesn't exist
-                if (!app.UserExists(user_id)) {
-                    app.AddUser(user_id);
-                    std::cout << "Created new user with ID " << user_id << " and balance 0.0\n";
-                    users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
+
+                logger_.command_received("LOGIN_USER", "user_id=" + std::to_string(user_id));
+
+                std::lock_guard<std::mutex> lock(app_mutex);
+
+                if (!global_app->UserExists(user_id)) {
+                    global_app->AddUser(user_id);
+                    logger_.user_created(user_id, 0.0);
                 }
 
                 current_user_id = user_id;
-                is_admin_ = false;
+                is_admin_local = false;
                 send_ok(client);
+                logger_.auth_success(user_id, false);
                 continue;
             }
-
-            // Logout command
             else if (command == CMD_LOGOUT) {
-                is_admin_ = false;
+                logger_.info("Logout requested by {}",
+                    is_admin_local ? "ADMIN" : "USER_" + std::to_string(current_user_id));
+                is_admin_local = false;
                 current_user_id = -1;
                 send_ok(client);
                 continue;
             }
-            // Authorization check
-            else if (!is_admin_ && current_user_id == -1 && command != CMD_LOGIN_USER && command != CMD_LOGIN_ADMIN) {
+
+            if (!is_admin_local && current_user_id == -1) {
+                logger_.warn("Unauthorized access attempt: {}", command);
                 send_error(client, "Not authorized");
                 continue;
             }
 
-            // Display menu to user
+            // processing user commands
+            std::lock_guard<std::mutex> lock(app_mutex);
+
             if (command == CMD_SHOW_MENU) {
+                logger_.command_received("SHOW_MENU", "user_id=" + std::to_string(current_user_id));
+
                 std::vector<std::string> lines;
-                if (app.GetMenu().empty()) {
+                if (global_app->GetMenu().empty()) {
                     lines.push_back("Menu is empty.");
+                    logger_.debug("Menu is empty");
                 }
                 else {
-                    for (size_t i = 0; i < app.GetMenu().size(); ++i) {
+                    for (size_t i = 0; i < global_app->GetMenu().size(); ++i) {
                         std::ostringstream oss;
-                        oss << (i + 1) << ". " << app.GetMenu()[i].name << " - " << app.GetMenu()[i].price << " rub.";
+                        oss << (i + 1) << ". " << global_app->GetMenu()[i].name
+                            << " - " << global_app->GetMenu()[i].price << " rub.";
                         lines.push_back(oss.str());
                     }
+                    logger_.debug("Sending menu with {} items", lines.size());
                 }
                 send_list(client, lines);
-                continue;
             }
-                
-            // Create new order
             else if (command == CMD_CREATE_ORDER) {
+                logger_.command_received("CREATE_ORDER", "user_id=" + std::to_string(current_user_id));
+
                 std::vector<std::string> dishes;
                 double total = 0.0;
                 int token;
-                // Parse dish numbers from command
-                while (iss >> token) {
-                    if (token > 0 && token <= app.GetMenu().size()) {
-                        const Dish& dish = app.GetMenu()[token - 1];
+                std::stringstream dish_details;
+                std::vector<int> dish_numbers;
+
+                std::string remaining_input;
+                std::getline(iss, remaining_input);
+
+                std::istringstream token_stream(remaining_input);
+                while (token_stream >> token) {
+                    dish_numbers.push_back(token);
+                    if (token > 0 && token <= (int)global_app->GetMenu().size()) {
+                        const Dish& dish = global_app->GetMenu()[token - 1];
                         dishes.push_back(dish.name);
                         total += dish.price;
+                        dish_details << dish.name << " (" << dish.price << " rub.), ";
+                        logger_.debug("User selected dish: {} - {} rub.", dish.name, dish.price);
                     }
                     else {
+                        logger_.error("Invalid dish number: {}", token);
                         send_error(client, "Invalid dish number: " + std::to_string(token));
-                        return;
+                        goto next_command;
                     }
                 }
 
-                // Validate at least one dish was selected
                 if (dishes.empty()) {
+                    logger_.warn("Empty order attempt by user {}", current_user_id);
                     send_error(client, "No valid dishes");
-                    return;
+                    goto next_command;
                 }
 
-                // Check user has sufficient balance
-                double balance = app.GetAccountBalance(current_user_id);
+                double balance = global_app->GetAccountBalance(current_user_id);
+                logger_.debug("Balance check: user={}, balance={}, required={}",
+                    current_user_id, balance, total);
+
                 if (balance < total) {
-                    send_error(client,
-                        "Insufficient funds. Required: " +
-                        std::to_string(total) +
-                        " rub., Available: " +
-                        std::to_string(balance) + " rub."
-                    );
-                    return;
+                    logger_.warn("Insufficient funds for user {} (has: {}, needs: {})",
+                        current_user_id, balance, total);
+                    send_error(client, "Insufficient funds. Required: " + std::to_string(total) +
+                        " rub., Available: " + std::to_string(balance) + " rub.");
+                    goto next_command;
                 }
 
-                // Create order in database
-                orders_db::CreateOrder(&app.GetOrdersMutable(), current_user_id, dishes,total
-                );
+                int new_order_id = global_app->GetOrders().empty() ? 1 : global_app->GetOrders().back().id + 1;
+                orders_db::CreateOrder(&global_app->GetOrdersMutable(), current_user_id, dishes, total);
+                logger_.order_created(new_order_id, current_user_id, total);
 
-                // Deduct amount from user balance
-                try {
-                    users_db::Deposit(&app.GetUserAccountsMutable(), current_user_id, -total);
-                    users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
-                }
-                catch (const std::exception& e) {
-                    send_error(client, "Failed to deduct funds: " + std::string(e.what()));
-                    return;
-                }
+                double old_balance = global_app->GetAccountBalance(current_user_id);
+                users_db::Deposit(&global_app->GetUserAccountsMutable(), current_user_id, -total);
+                users_db::Save(global_app->GetUserAccounts(), global_app->GetUsersFile());
+                orders_db::Save(global_app->GetOrders(), global_app->GetOrdersFile());
 
-                // Save orders to file
-                orders_db::Save(app.GetOrders(), app.GetOrdersFile());
+                double new_balance = global_app->GetAccountBalance(current_user_id);
+                logger_.user_balance_changed(current_user_id, old_balance, new_balance);
 
-                // Send success response with remaining balance
-                send_str(client,
-                    std::string(RES_OK) + " " +
-                    std::to_string(total) + " " +
-                    "(Balance after order: " +
-                    std::to_string(app.GetAccountBalance(current_user_id)) + ")"
-                );
-                continue;
+                send_str(client, std::string(RES_OK) + " " + std::to_string(total) +
+                    " (Balance after order: " + std::to_string(new_balance) + ")");
+                logger_.command_success("CREATE_ORDER", "user=" + std::to_string(current_user_id) +
+                    ", total=" + std::to_string(total));
             }
-
-            // Check order status for current user
             else if (command == CMD_CHECK_STATUS) {
+                logger_.command_received("CHECK_STATUS", "user_id=" + std::to_string(current_user_id));
+
                 std::vector<std::string> lines;
                 bool found = false;
-                // Find all orders for current user
-                for (const auto& o : app.GetOrders()) {
+                for (const auto& o : global_app->GetOrders()) {
                     if (o.user_id == current_user_id) {
                         std::ostringstream oss;
-                        oss << "ID " << o.id << " | Status: " << o.status << " | Total: " << o.total;
+                        oss << "ID " << o.id << " | Status: " << o.status
+                            << " | Total: " << o.total;
                         lines.push_back(oss.str());
                         found = true;
                     }
                 }
-                if (!found) lines.push_back("No orders.");
-                send_list(client, lines);
-                continue;
-            }
 
-            // Deposit money to user account
+                if (!found) {
+                    lines.push_back("No orders.");
+                    logger_.debug("No orders found for user {}", current_user_id);
+                }
+                else {
+                    logger_.debug("Found {} orders for user {}", lines.size(), current_user_id);
+                }
+                send_list(client, lines);
+            }
             else if (command == CMD_DEPOSIT) {
                 if (current_user_id == -1) {
+                    logger_.warn("Deposit attempt without authorization");
                     send_error(client, "Not authorized");
-                    std::cout << "DEBUG: Deposit rejected - user not authorized" << std::endl;
-                    continue;
-                }
-
-                std::cout << "DEBUG: DEPOSIT command received. User ID: " << current_user_id << std::endl;
-
-                if (!app.UserExists(current_user_id)) {
-                    std::cout << "DEBUG: User not found!" << std::endl;
-                    send_error(client, "User not found");
-                    continue;
+                    goto next_command;
                 }
 
                 double amount;
                 if (!(iss >> amount)) {
-                    std::cout << "DEBUG: Failed to parse deposit amount" << std::endl;
+                    logger_.error("Failed to parse deposit amount");
                     send_error(client, "Invalid amount format");
-                    continue;
+                    goto next_command;
                 }
 
-                std::cout << "DEBUG: Amount = " << amount << std::endl;
+                logger_.command_received("DEPOSIT", "user=" + std::to_string(current_user_id) +
+                    ", amount=" + std::to_string(amount));
 
                 if (amount <= 0) {
-                    std::cout << "DEBUG: Invalid deposit amount: " << amount << std::endl;
+                    logger_.warn("Invalid deposit amount: {}", amount);
                     send_error(client, "Invalid amount");
-                    continue;
+                    goto next_command;
                 }
 
-                // Process deposit
                 try {
-                    users_db::Deposit(&app.GetUserAccountsMutable(), current_user_id, amount);
-                    users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
+                    double old_balance = global_app->GetAccountBalance(current_user_id);
+                    users_db::Deposit(&global_app->GetUserAccountsMutable(), current_user_id, amount);
+                    users_db::Save(global_app->GetUserAccounts(), global_app->GetUsersFile());
 
-                    double new_balance = app.GetAccountBalance(current_user_id);
-                    std::cout << "DEBUG: New balance = " << new_balance << std::endl;
+                    double new_balance = global_app->GetAccountBalance(current_user_id);
+                    logger_.user_balance_changed(current_user_id, old_balance, new_balance);
 
                     send_str(client, std::string(RES_OK) + " " + std::to_string(new_balance));
-                    std::cout << "DEBUG: Deposit successful. Sent response: OK " << new_balance << std::endl;
+                    logger_.command_success("DEPOSIT", "user=" + std::to_string(current_user_id) +
+                        ", +" + std::to_string(amount) + " rub.");
                 }
                 catch (const std::exception& e) {
-                    std::cerr << "ERROR: Deposit failed - " << e.what() << std::endl;
+                    logger_.error("Deposit failed - {}", e.what());
                     send_error(client, "Deposit operation failed");
                 }
             }
-
-            // Get current user balance
             else if (command == CMD_GET_BALANCE) {
-                send_str(client, std::to_string(app.GetAccountBalance(current_user_id)));
-                continue;
-            }
+                logger_.command_received("GET_BALANCE", "user_id=" + std::to_string(current_user_id));
 
-            else if (is_admin_) {
-                // Admin view of menu
+                double balance = global_app->GetAccountBalance(current_user_id);
+                logger_.debug("Balance for user {}: {}", current_user_id, balance);
+                send_str(client, std::to_string(balance));
+            }
+            else if (is_admin_local) {
+                // admin commands
                 if (command == CMD_ADMIN_SHOW_MENU) {
+                    logger_.command_received("ADMIN_SHOW_MENU");
+
                     std::vector<std::string> lines;
-                    for (size_t i = 0; i < app.GetMenu().size(); ++i) {
+                    for (size_t i = 0; i < global_app->GetMenu().size(); ++i) {
                         std::ostringstream oss;
-                        oss << (i + 1) << ". " << app.GetMenu()[i].name << " - " << app.GetMenu()[i].price;
+                        oss << (i + 1) << ". " << global_app->GetMenu()[i].name
+                            << " - " << global_app->GetMenu()[i].price;
                         lines.push_back(oss.str());
                     }
+                    logger_.debug("Sending admin menu with {} items", lines.size());
                     send_list(client, lines);
-                    continue;
                 }
-                    
-                // Add new dish to menu
                 else if (command == CMD_ADMIN_ADD_DISH) {
                     std::string name;
                     double price;
                     std::getline(iss >> std::ws, name, ';');
                     iss >> price;
+
+                    logger_.command_received("ADMIN_ADD_DISH", "name=" + name + ", price=" + std::to_string(price));
+
                     if (price > 0 && !name.empty()) {
                         Dish d = { name, price };
-                        menu_db::AddDish(&app.GetMenuMutable(), d);
-                        menu_db::Save(app.GetMenu(), app.GetMenuFile());
+                        menu_db::AddDish(&global_app->GetMenuMutable(), d);
+                        menu_db::Save(global_app->GetMenu(), global_app->GetMenuFile());
+                        logger_.dish_added(name, price);
                         send_ok(client);
                     }
                     else {
+                        logger_.warn("Invalid dish data: name='{}', price={}", name, price);
                         send_error(client, "Invalid data");
                     }
-                    continue;
                 }
-
-                // Remove dish from menu by index
                 else if (command == CMD_ADMIN_REMOVE_DISH) {
                     size_t idx;
                     iss >> idx;
-                    if (idx > 0 && idx <= app.GetMenu().size()) {
-                        menu_db::RemoveDish(&app.GetMenuMutable(), idx - 1);
-                        menu_db::Save(app.GetMenu(), app.GetMenuFile());
+
+                    logger_.command_received("ADMIN_REMOVE_DISH", "index=" + std::to_string(idx));
+
+                    if (idx > 0 && idx <= global_app->GetMenu().size()) {
+                        std::string dish_name = global_app->GetMenu()[idx - 1].name;
+                        menu_db::RemoveDish(&global_app->GetMenuMutable(), idx - 1);
+                        menu_db::Save(global_app->GetMenu(), global_app->GetMenuFile());
+                        logger_.dish_removed(dish_name);
                         send_ok(client);
                     }
                     else {
+                        logger_.warn("Invalid dish index: {} (menu size: {})", idx, global_app->GetMenu().size());
                         send_error(client, "Invalid index");
                     }
-                    continue;
                 }
-
-                // Update order status
                 else if (command == CMD_ADMIN_UPDATE_STATUS) {
                     int order_id;
                     std::string status;
                     iss >> order_id;
                     std::getline(iss >> std::ws, status);
-                    orders_db::UpdateStatus(&app.GetOrdersMutable(), order_id, status);
-                    orders_db::Save(app.GetOrders(), app.GetOrdersFile());
-                    send_ok(client);
-                    continue;
-                }
 
-                // Remove user and their orders
-                else if (command == CMD_ADMIN_REMOVE_USER) {
-                    int user_id;
-                    iss >> user_id;
-                    if (app.UserExists(user_id)) {
-                        app.GetUserAccountsMutable().erase(user_id);
-                        orders_db::RemoveUserOrders(&app.GetOrdersMutable(), user_id);
-                        users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
-                        orders_db::Save(app.GetOrders(), app.GetOrdersFile());
+                    status.erase(0, status.find_first_not_of(" \t"));
+                    status.erase(status.find_last_not_of(" \t") + 1);
+
+                    logger_.command_received("ADMIN_UPDATE_STATUS",
+                        "order_id=" + std::to_string(order_id) +
+                        ", status=" + status);
+
+                    bool order_found = false;
+                    for (const auto& order : global_app->GetOrders()) {
+                        if (order.id == order_id) {
+                            order_found = true;
+                            std::string old_status = order.status;
+                            orders_db::UpdateStatus(&global_app->GetOrdersMutable(), order_id, status);
+                            orders_db::Save(global_app->GetOrders(), global_app->GetOrdersFile());
+                            logger_.info("[ORDER] Status updated: ID={}, {} -> {}",
+                                order_id, old_status, status);
+                            break;
+                        }
+                    }
+
+                    if (order_found) {
                         send_ok(client);
                     }
                     else {
+                        logger_.warn("Order not found: {}", order_id);
+                        send_error(client, "Order not found");
+                    }
+                }
+                else if (command == CMD_ADMIN_REMOVE_USER) {
+                    int user_id;
+                    iss >> user_id;
+
+                    logger_.command_received("ADMIN_REMOVE_USER", "user_id=" + std::to_string(user_id));
+
+                    if (global_app->UserExists(user_id)) {
+                        int orders_count = 0;
+                        for (const auto& order : global_app->GetOrders()) {
+                            if (order.user_id == user_id) orders_count++;
+                        }
+
+                        global_app->GetUserAccountsMutable().erase(user_id);
+                        orders_db::RemoveUserOrders(&global_app->GetOrdersMutable(), user_id);
+                        users_db::Save(global_app->GetUserAccounts(), global_app->GetUsersFile());
+                        orders_db::Save(global_app->GetOrders(), global_app->GetOrdersFile());
+
+                        logger_.info("[USER] Removed: ID={}, orders_removed={}", user_id, orders_count);
+                        send_ok(client);
+                    }
+                    else {
+                        logger_.warn("User not found: {}", user_id);
                         send_error(client, "User not found");
                     }
-                    continue;
                 }
-
-                // Display all orders
                 else if (command == CMD_ADMIN_SHOW_ORDERS) {
+                    logger_.command_received("ADMIN_SHOW_ORDERS");
+
                     std::vector<std::string> lines;
-                    for (const auto& o : app.GetOrders()) {
+                    for (const auto& o : global_app->GetOrders()) {
                         std::ostringstream oss;
                         oss << "ID:" << o.id << " User:" << o.user_id
                             << " Status:" << o.status << " Total:" << o.total
                             << " Dishes:" << Join(o.dish_names, ", ");
                         lines.push_back(oss.str());
                     }
-                    if (lines.empty()) lines.push_back("No orders.");
-                    send_list(client, lines);
-                    continue;
-                }
 
-                // Display all users with balances
+                    if (lines.empty()) {
+                        lines.push_back("No orders.");
+                        logger_.debug("No orders in system");
+                    }
+                    else {
+                        logger_.debug("Sending {} orders to admin", lines.size());
+                    }
+                    send_list(client, lines);
+                }
                 else if (command == CMD_ADMIN_SHOW_USERS) {
+                    logger_.command_received("ADMIN_SHOW_USERS");
+
                     std::vector<std::string> lines;
-                    for (const auto& p : app.GetUserAccounts()) {
+                    for (const auto& p : global_app->GetUserAccounts()) {
                         std::ostringstream oss;
                         oss << "ID:" << p.first << " Balance:" << p.second;
                         lines.push_back(oss.str());
                     }
+
                     if (lines.empty()) {
-                        lines.push_back("No users found");
+                        lines.push_back("No users.");
+                        logger_.debug("No users in system");
+                    }
+                    else {
+                        logger_.debug("Sending {} users to admin", lines.size());
                     }
                     send_list(client, lines);
                 }
-                continue;
+                else {
+                    logger_.warn("Unknown admin command: {}", command);
+                    send_error(client, "Unknown admin command");
+                }
             }
             else {
-                std::cout << "DEBUG: UNKNOWN COMMAND: '" << command << "'" << std::endl;
-                send_error(client, "Unknown command or access denied");
+                logger_.warn("Access denied for command: {} (user: {})", command, current_user_id);
+                send_error(client, "Access denied");
+            }
+
+        next_command:
+            continue;
+        }
+
+        closesocket(client);
+        logger_.info("Client session ended for {}", client_ip);
+
+        std::cout << "\n[" << getCurrentTime() << "]  CLIENT DISCONNECTED" << std::endl;
+        std::cout << "IP: " << client_ip << std::endl;
+        std::cout << "==========================================\n" << std::endl;
+    }
+
+    ~Server() {
+        logger_.info("Server shutting down");
+        if (listen_socket_ != INVALID_SOCKET) {
+            closesocket(listen_socket_);
+            logger_.debug("Listen socket closed");
+        }
+
+        // clean global object
+        {
+            std::lock_guard<std::mutex> lock(app_mutex);
+            if (global_app) {
+                delete global_app;
+                global_app = nullptr;
+                logger_.debug("Global RestaurantApp deleted");
             }
         }
 
-        // Save all data to files when client disconnects
-        users_db::Save(app.GetUserAccounts(), app.GetUsersFile());
-        orders_db::Save(app.GetOrders(), app.GetOrdersFile());
-        menu_db::Save(app.GetMenu(), app.GetMenuFile());
-    }
-
-    // Destructor - cleanup resources
-    ~Server() {
-        if (listen_socket_ != INVALID_SOCKET) closesocket(listen_socket_);
-        #ifdef _WIN32
-        WSACleanup();    // Cleanup Winsock on Windows
-        #endif
+        WSACleanup();
+        logger_.info("Server cleanup complete");
     }
 };
 
-// Main function - server entry point
 int main() {
-    Server server;    // Create server instance
-    // Initialize server on localhost port 8080
-    if (!server.init("127.0.0.1", 8080)) {
-        return 1;    // Exit with error code if initialization fails
+    Server server;
+    if (!server.init("0.0.0.0", 8080)) {
+        return 1;
     }
-    server.run();    // Start server main loop
+    server.run();
     return 0;
-
 }
-
-
